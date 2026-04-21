@@ -27,11 +27,14 @@ class SplitEngine:
         self,
         input_file: Path,
         output_dir: Path,
+        header_lines: Optional[list[str]] = None,
+        encoding: str = "utf-8"
     ) -> None:
         self.input_file = os.path.splitext(os.path.basename(Path(input_file)))[0]
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
-        self.encoding = "utf-8"
+        self.encoding = encoding
+        self.header_lines = header_lines
 
         self._segment_index = 0
         self._current_segment = SegmentSpec(name="initial")
@@ -45,6 +48,9 @@ class SplitEngine:
         path = self.output_dir / f"{self._segment_index:04d}_{segment.name}_{self.input_file}.asc"
         path.parent.mkdir(parents=True, exist_ok=True)
         self._current_fp = path.open("w", encoding=self.encoding, newline="")
+        if self._segment_index > 1 and self.header_lines is not None:
+            for line in self.header_lines:
+                self._current_fp.write(line)
 
         self._current_segment = segment
         self._current_meta = SegmentMeta(
