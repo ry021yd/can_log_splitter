@@ -68,7 +68,7 @@ def generate_id2bus_map(file_patterns, label_map_json):
                 # BO record
                 match = PAT_BO.search(line)
                 if match:
-                    id = format(int(match["id"]) & 0x1FFFFFFF, 'X')
+                    id = f'0x{int(match["id"]) & 0x1FFFFFFF:X}'
 
                     if id not in id2bus:
                         id2bus[id] = {
@@ -85,7 +85,10 @@ def generate_id2bus_map(file_patterns, label_map_json):
         })
     
     id2bus_list = sorted(id2bus_list, key=lambda x: int(x["id"], 16))
-    return id2bus_list
+    
+    root = {}
+    root["id_to_buses"] = id2bus_list
+    return root
 
 def main():
     # get arguments

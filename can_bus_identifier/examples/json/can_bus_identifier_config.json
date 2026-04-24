@@ -1,0 +1,12 @@
+{
+    "ignore_ids": [
+        "0x666"
+    ],
+    "ignore_id_rules": [
+        {
+            "name": "Ignore the 700s",
+            "value": "0x700",
+            "mask": "0x700"
+        }
+    ]
+}

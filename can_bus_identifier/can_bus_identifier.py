@@ -1,21 +1,39 @@
 import argparse
+from dataclasses import dataclass, field
 import json
 from pathlib import Path
 import pprint
 import sys
 from typing import Optional
 
-def load_id2bus_map(json_file: str | Path) -> dict[str, set[str]]:
+@dataclass
+class BusResolveState:
+    bus_number: str
+    candidates: set[str] | None = None
+    seen_ids: set[str] = field(default_factory=set)
+    ignored_ids: set[str] = field(default_factory=set)
+
+@dataclass(frozen=True)
+class IgnoreIdRule:
+    value: int
+    mask: int
+
+def normalize_canid(value: str) -> int:
+    value = value.strip()
+    return int(value, 16)
+
+def load_id2bus_map(json_file: str | Path) -> dict[int, set[str]]:
     with Path(json_file).open("r", encoding="utf-8") as fp:
         data = json.load(fp)
+        items = data.get("id_to_buses")
 
-    if not isinstance(data, list):
-        raise ValueError("id2bus JSON root must be a list.")
+    if not isinstance(items, list):
+        raise ValueError("'id_to_buses' must be a list.")
 
-    result: dict[str, set[str]] = {}
-    for idx, item in enumerate(data, start=1):
+    result: dict[int, set[str]] = {}
+    for idx, item in enumerate(items, start=1):
         if not isinstance(item, dict):
-            raise ValueError(f"id2bus[{idx}] must be an object.")
+            raise ValueError(f"id2bus[{idx}] must be a dict.")
 
         can_id = item.get("id")
         buses = item.get("buses")
@@ -28,10 +46,49 @@ def load_id2bus_map(json_file: str | Path) -> dict[str, set[str]]:
 
     return result
 
-def normalize_canid(value: str) -> str:
-        return value.strip().upper()
+def load_config_json(json_file: str | Path | None) -> tuple[set[int] | None, list[IgnoreIdRule] | None]:
+    if not json_file:
+        return None, None
+    with Path(json_file).open("r", encoding="utf-8") as fp:
+        data = json.load(fp)
+        ids = data.get("ignore_ids")
+        rules = data.get("ignore_id_rules")
 
-def parse_asc_frame(line: str) -> Optional[tuple[str, str]]:
+        if ids is None:
+            return_ids = None
+        elif not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
+            raise ValueError(f"'ignore_ids' must be a list[str].")
+        else:
+            return_ids = {normalize_canid(id) for id in ids}
+
+        if rules is None:
+            return_rules = None
+        else:
+            if not isinstance(rules, list):
+                raise ValueError("'ignore_id_rules' must be a list.")
+
+            return_rules: list[IgnoreIdRule] = []
+            for idx, rule in enumerate(rules, start=1):
+                if not isinstance(rule, dict):
+                    raise ValueError(f"ignore_id_rules[{idx}] must be a dict.")
+
+                value = rule.get("value")
+                mask = rule.get("mask")
+                if not isinstance(value, str):
+                    raise ValueError(f"ignore_id_rules[{idx}].value must be a string.")
+                if not isinstance(mask, str):
+                    raise ValueError(f"ignore_id_rules[{idx}].mask must be a string.")
+
+                return_rules.append(
+                    IgnoreIdRule(
+                        value = normalize_canid(value),
+                        mask = normalize_canid(mask),
+                    )
+                )
+        
+    return return_ids, return_rules
+
+def parse_asc_frame(line: str) -> Optional[tuple[str, int]]:
     parts = line.strip().split()
     if not parts or len(parts) < 7:
         return None
@@ -46,85 +103,118 @@ def parse_asc_frame(line: str) -> Optional[tuple[str, str]]:
             # Classic CAN
             bus_number = parts[1]
             canid = parts[2]
-        return bus_number, canid
-    except (IndexError):
+        return bus_number, normalize_canid(canid)
+    except IndexError:
         return None
 
-def narrow_bus_candidates(input_asc: str, id2bus_json: str, unique_label: bool, max_frames: int):
-    id2bus = load_id2bus_map(id2bus_json) 
-    states: dict[str, dict] = {}
+def is_ignored(can_id: int, ignore_ids: set[int] | None, ignore_id_rules: list[IgnoreIdRule] | None) -> bool:
+    if ignore_ids is not None and can_id in ignore_ids:
+        return True
+    
+    if ignore_id_rules is not None:
+        for rule in ignore_id_rules:
+            mask = rule.mask
+            if can_id & mask == rule.value & mask:
+                return True
+    
+    return False
+    
+def resolve_bus_labels(input_asc: str, id2bus_json: str, config_json: str | None, unique_label: bool, max_frames: int) -> list[dict]:
+    id2bus = load_id2bus_map(id2bus_json)
+    ignore_ids, ignore_id_rules = load_config_json(config_json)
+
+    states: dict[str, BusResolveState] = {}
 
     with Path(input_asc).open("r", encoding="utf-8") as fp:
-        passed_line_cnt = 0
-        for line_no, line in enumerate(fp, start=1):
-            if line_no > max_frames + passed_line_cnt:
-                break
-
+        parsed_line_cnt = 0
+        for line in fp:          
             parsed = parse_asc_frame(line)
             if parsed is None:
-                passed_line_cnt += 1
                 continue
 
             bus_number, can_id = parsed
+            parsed_line_cnt += 1
+
+            if parsed_line_cnt > max_frames:
+                break
+            
+            state = states.get(bus_number)
+
+            if is_ignored(can_id, ignore_ids, ignore_id_rules):
+                if state is None:
+                    states[bus_number] = BusResolveState(
+                        bus_number = bus_number,
+                        ignored_ids = set([f"0x{can_id:X}"])
+                    )
+                else:
+                    state.ignored_ids.add(f"0x{can_id:X}")
+                continue
+
             mapped_labels = id2bus.get(can_id)
             if mapped_labels is None:
+                # Currently, unknown id is skipped.
                 continue
-
-            state = states.get(bus_number)
+                    
             if state is None:
-                states[bus_number] = {
-                    "bus_number": bus_number,
-                    "candidates": set(mapped_labels),
-                    "seen_ids": [can_id]
-                }
+                states[bus_number] = BusResolveState(
+                        bus_number = bus_number,
+                        candidates = set(mapped_labels),
+                        seen_ids = set([f"0x{can_id:X}"])
+                    )
                 continue
+            
+            if state.candidates is None:
+                state.candidates = set(mapped_labels)
+            else:
+                state.candidates &= set(mapped_labels)
 
-            state["candidates"] &= mapped_labels
-            if can_id not in state["seen_ids"]:
-                state["seen_ids"].append(can_id)
+            state.seen_ids.add(f"0x{can_id:X}")
     
     if unique_label:
         changed = True
         while changed:
             changed = False
             resolved_labels = {
-                sorted(state["candidates"])[0]
+                sorted(state.candidates)[0]
                 for state in states.values()
-                if len(state["candidates"]) == 1
+                if state.candidates and len(state.candidates) == 1
             }
 
             for state in states.values():
-                if len(state["candidates"]) <= 1:
+                if state.candidates is None or len(state.candidates) <= 1:
                     continue
 
-                before = set(state["candidates"])
+                before = set(state.candidates)
                 after = before - resolved_labels
 
                 if before != after:
-                    state["candidates"] = after
+                    state.candidates = after
                     changed = True
-
-    return states 
-
-def resolve_bus_labels(input_asc: str, id2bus_json: str, unique_label: bool, max_frames: int) -> list[dict]:
-    states = narrow_bus_candidates(input_asc, id2bus_json, unique_label, max_frames)
     
     results: list[dict] = []
     for bus_number in sorted(states.keys(), key=lambda x: int(x)):
         state = states[bus_number]
-        labels = sorted(state["candidates"])
 
-        if len(labels) == 1:
-            resolved = "yes"
+        labels = []
+        if state.candidates is None:
+            result = "only ignored ids seen"
         else:
-            resolved = "no"
+            labels = sorted(state.candidates)
+            label_count = len(labels)
+            if label_count == 1:
+                result = "resolved"
+            elif label_count == 0:
+                result = "no candidates"
+            else:
+                result = "multiple candidates"
 
         results.append(
             {
                 "bus_number": bus_number,
-                "resolved": resolved,
+                "result": result,
                 "labels": labels,
-                "seen_ids": state["seen_ids"],
+                "seen_ids": sorted(state.seen_ids),
+                "ignored_ids": sorted(state.ignored_ids)
             }
         )
 
@@ -135,11 +225,12 @@ def main() -> int:
     parser.add_argument("input_asc", help="Input ASC file")
     parser.add_argument("id2bus_json", help="JSON file generated by generate_id2bus_map.py")
     parser.add_argument("-O", "--output", help="output file")
+    parser.add_argument("-c", "--config-json", help="Configuration file for adding settings such as ignore IDs")
     parser.add_argument("-u", "--unique-label", action="store_true", help="if true, assume that the bus appears on only one interface")
     parser.add_argument("-m", "--max-frames", type=int, default=10000, help="Maximum number of ASC frames to read")
     args = parser.parse_args()
 
-    asc_busmap = resolve_bus_labels(args.input_asc, args.id2bus_json, args.unique_label, args.max_frames) 
+    asc_busmap = resolve_bus_labels(args.input_asc, args.id2bus_json, args.config_json, args.unique_label, args.max_frames) 
 
     if args.output:
         with open(args.output, "w", encoding="utf-8") as fp:

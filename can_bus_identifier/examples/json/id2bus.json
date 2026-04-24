@@ -1,31 +1,33 @@
-[
-  {
-    "id": "64",
-    "buses": [
-      "AAA",
-      "BBB",
-      "CCC"
-    ]
-  },
-  {
-    "id": "7B",
-    "buses": [
-      "AAA"
-    ]
-  },
-  {
-    "id": "FC",
-    "buses": [
-      "BBB",
-      "DDD"
-    ]
-  },
-  {
-    "id": "159",
-    "buses": [
-      "BBB",
-      "CCC",
-      "DDD"
-    ]
-  }
-]
+{
+  "id_to_buses": [
+    {
+      "id": "0x64",
+      "buses": [
+        "AAA",
+        "BBB",
+        "CCC"
+      ]
+    },
+    {
+      "id": "0x7B",
+      "buses": [
+        "AAA"
+      ]
+    },
+    {
+      "id": "0xFC",
+      "buses": [
+        "BBB",
+        "DDD"
+      ]
+    },
+    {
+      "id": "0x159",
+      "buses": [
+        "BBB",
+        "CCC",
+        "DDD"
+      ]
+    }
+  ]
+}
