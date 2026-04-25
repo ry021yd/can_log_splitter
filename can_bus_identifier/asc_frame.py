@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from utils import hex_canid_to_int
+from .utils import hex_canid_to_int
 
 @dataclass(frozen=True)
 class AscFrame:

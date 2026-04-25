@@ -1,8 +1,9 @@
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
+from typing import Any
 
-from utils import hex_canid_to_int
+from .utils import hex_canid_to_int
 
 @dataclass(frozen=True)
 class IgnoreIdRule:
@@ -23,41 +24,41 @@ class IdentifierConfig:
 
         return any(rule.matches(can_id) for rule in self.ignore_id_rules)
 
-def load_config_json(json_file: str | Path | None) -> IdentifierConfig:
-    if not json_file:
-        return IdentifierConfig()
-    with Path(json_file).open("r", encoding="utf-8") as fp:
-        data = json.load(fp)
+    @classmethod
+    def empty(cls) -> "IdentifierConfig":
+        return cls()
+
+    @classmethod
+    def from_json_dict(cls, data: dict[str, Any]) -> "IdentifierConfig":
         ids = data.get("ignore_ids")
         rules = data.get("ignore_id_rules")
 
         if ids is None:
-            return_ids: set[int] = set()
+            ignore_ids: set[int] = set()
         elif not isinstance(ids, list) or not all(isinstance(x, str) for x in ids):
-            raise ValueError(f"'ignore_ids' must be a list[str].")
+            raise ValueError("'ignore_ids' must be a list[str].")
         else:
-            return_ids = {hex_canid_to_int(id) for id in ids}
+            ignore_ids = {hex_canid_to_int(x) for x in ids}
 
         if rules is None:
-            return_rules: list[IgnoreIdRule] = []
+            ignore_id_rules: list[IgnoreIdRule] = []
+        elif not isinstance(rules, list):
+            raise ValueError("'ignore_id_rules' must be a list.")
         else:
-            if not isinstance(rules, list):
-                raise ValueError("'ignore_id_rules' must be a list.")
+            ignore_id_rules = [
+                IgnoreIdRule.from_json_dict(rule, idx)
+                for idx, rule in enumerate(rules, start=1)
+            ]
 
-            return_rules: list[IgnoreIdRule] = []
-            for idx, rule in enumerate(rules, start=1):
-                if not isinstance(rule, dict):
-                    raise ValueError(f"ignore_id_rules[{idx}] must be a dict.")
+        return cls(
+            ignore_ids=ignore_ids,
+            ignore_id_rules=ignore_id_rules,
+        )
 
-                value = rule.get("value")
-                mask = rule.get("mask")
-                if not isinstance(value, str):
-                    raise ValueError(f"ignore_id_rules[{idx}].value must be a string.")
-                if not isinstance(mask, str):
-                    raise ValueError(f"ignore_id_rules[{idx}].mask must be a string.")
+    @classmethod
+    def load_json(cls, json_file: str | Path | None) -> "IdentifierConfig":
+        if not json_file:
+            return cls.empty()
 
-                return_rules.append(
-                    IgnoreIdRule(hex_canid_to_int(value), hex_canid_to_int(mask))
-                )
-        
-    return IdentifierConfig(return_ids, return_rules)
+        with Path(json_file).open("r", encoding="utf-8") as fp:
+            return cls.from_json_dict(json.load(fp))

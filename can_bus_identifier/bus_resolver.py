@@ -6,10 +6,10 @@ from pathlib import Path
 import pprint
 import sys
 
-from asc_frame import parse_asc_frame
-from id2bus_map import Id2BusMap
-from config import load_config_json
-from utils import int_canid_to_hex
+from .config import IdentifierConfig
+from .asc_frame import parse_asc_frame
+from .id2bus_map import Id2BusMap
+from .utils import int_canid_to_hex
 
 @dataclass
 class BusResolveState:
@@ -103,7 +103,7 @@ def resolve_bus_labels(
         ignore_unknown_ids: bool
     ) -> list[dict]:
     id2bus = Id2BusMap.load_json(id2bus_json)
-    ignore_config = load_config_json(config_json)
+    ignore_config = IdentifierConfig.load_json(config_json)
 
     states: dict[str, BusResolveState] = {}
 

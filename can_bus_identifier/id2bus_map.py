@@ -4,8 +4,8 @@ import re
 import json
 from typing import Iterable
 
-from bus_label_map import BusLabelMap
-from utils import collect_files, hex_canid_to_int, int_canid_to_hex
+from .bus_label_map import BusLabelMap
+from .utils import collect_files, hex_canid_to_int, int_canid_to_hex
 
 PAT_BO = re.compile(r'^\s*BO_\s+(?P<id>\d+)\s+(?P<msg_name>\w+)\s*:\s*(?P<dlc>\d+)\s+(?P<tx_ecu>\w+)\s*')
 
